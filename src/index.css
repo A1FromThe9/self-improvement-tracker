@@ -1,0 +1,100 @@
+@import 'tailwindcss';
+@import '@fontsource/outfit/400.css';
+@import '@fontsource/outfit/500.css';
+@import '@fontsource/outfit/600.css';
+@import '@fontsource/outfit/700.css';
+@import '@fontsource/outfit/800.css';
+
+@theme {
+  --font-sans: 'Outfit', system-ui, -apple-system, sans-serif;
+  /* Single accent: acid green, kept under 80% saturation */
+  --color-accent: oklch(0.86 0.19 126);
+  --color-accent-dim: oklch(0.62 0.14 126);
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--color-zinc-950);
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-zinc-100);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+input,
+textarea {
+  user-select: text;
+}
+
+#root {
+  min-height: 100dvh;
+}
+
+@keyframes stamp {
+  0% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(0.94);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes rise {
+  0% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-42px);
+    opacity: 0;
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-accent) 45%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 14px transparent;
+  }
+}
+
+.animate-stamp {
+  animation: stamp 0.35s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+.animate-rise {
+  animation: rise 0.9s ease-out both;
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 0.6s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-stamp,
+  .animate-pulse-ring {
+    animation: none;
+  }
+  .animate-rise {
+    animation: none;
+    opacity: 0;
+  }
+}
