@@ -13,6 +13,36 @@ db.version(1).stores({
   profile: 'id',
 })
 
+// v2: habits/completions moved from an abstract difficulty tier to a real
+// unit + quantity (e.g. "20 minutes" instead of "Solid"). Existing rows are
+// tagged as unit 'count', quantity 1 so nothing crashes; historical XP totals
+// are left untouched. Edit existing missions afterward to assign a real unit.
+db.version(2).stores({
+  habits: '++id, area, archivedAt',
+  completions: '++id, habitId, dateKey, [habitId+dateKey]',
+  profile: 'id',
+}).upgrade(async (tx) => {
+  await tx
+    .table('habits')
+    .toCollection()
+    .modify((habit) => {
+      if (habit.unit === undefined) {
+        habit.unit = 'count'
+        habit.defaultQuantity = 1
+        delete habit.difficulty
+      }
+    })
+  await tx
+    .table('completions')
+    .toCollection()
+    .modify((completion) => {
+      if (completion.quantity === undefined) {
+        completion.quantity = 1
+        completion.unit = 'count'
+      }
+    })
+})
+
 export const PROFILE_ID = 1
 
 export async function ensureProfile(): Promise<Profile> {

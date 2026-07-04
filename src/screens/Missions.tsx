@@ -1,11 +1,19 @@
 import { useMemo, useState } from 'react'
-import { Archive, Flame, Plus } from 'lucide-react'
-import type { Area, Difficulty, Habit } from '../game/types'
-import { AREAS, AREA_LABELS } from '../game/types'
+import { Archive, Flame, Minus, Plus } from 'lucide-react'
+import type { Area, Habit, Unit } from '../game/types'
+import {
+  AREAS,
+  AREA_LABELS,
+  UNITS,
+  UNIT_LABELS,
+  UNIT_DEFAULT_QUANTITY,
+  UNIT_STEP,
+} from '../game/types'
 import { addHabit, archiveHabit, updateHabit } from '../db/repo'
 import { useActiveHabits, useAllCompletions } from '../lib/hooks'
-import { DIFFICULTY_LABELS, DIFFICULTY_XP } from '../game/xp'
+import { xpForQuantity } from '../game/xp'
 import { habitStreak } from '../game/streaks'
+import { formatQuantity } from '../lib/format'
 import { AreaIcon } from '../components/AreaIcon'
 import { Sheet } from '../components/Sheet'
 
@@ -16,14 +24,16 @@ interface FormState {
   id?: number
   name: string
   area: Area
-  difficulty: Difficulty
+  unit: Unit
+  defaultQuantity: number
   scheduleDays: number[]
 }
 
 const EMPTY_FORM: FormState = {
   name: '',
   area: 'body',
-  difficulty: 2,
+  unit: 'minutes',
+  defaultQuantity: UNIT_DEFAULT_QUANTITY.minutes,
   scheduleDays: EVERY_DAY,
 }
 
@@ -31,6 +41,14 @@ export function Missions() {
   const habits = useActiveHabits()
   const completions = useAllCompletions()
   const [form, setForm] = useState<FormState | null>(null)
+
+  const totalsByHabit = useMemo(() => {
+    const map = new Map<number, number>()
+    for (const c of completions ?? []) {
+      map.set(c.habitId, (map.get(c.habitId) ?? 0) + c.quantity)
+    }
+    return map
+  }, [completions])
 
   const completionsByHabit = useMemo(() => {
     const map = new Map<number, Set<string>>()
@@ -46,7 +64,8 @@ export function Missions() {
       id: habit.id,
       name: habit.name,
       area: habit.area,
-      difficulty: habit.difficulty,
+      unit: habit.unit,
+      defaultQuantity: habit.defaultQuantity,
       scheduleDays: habit.scheduleDays,
     })
 
@@ -55,7 +74,8 @@ export function Missions() {
     const payload = {
       name: form.name.trim(),
       area: form.area,
-      difficulty: form.difficulty,
+      unit: form.unit,
+      defaultQuantity: Math.max(1, form.defaultQuantity),
       scheduleDays: [...form.scheduleDays].sort(),
     }
     if (form.id !== undefined) {
@@ -79,7 +99,7 @@ export function Missions() {
           Missions
         </h1>
         <p className="mt-2 text-sm text-zinc-400">
-          Build the routine. Harder missions pay more XP.
+          Build the routine. Real quantities set the XP.
         </p>
       </header>
 
@@ -98,6 +118,7 @@ export function Missions() {
             habit.scheduleDays,
             completionsByHabit.get(habit.id!) ?? new Set(),
           )
+          const lifetime = totalsByHabit.get(habit.id!) ?? 0
           return (
             <li key={habit.id}>
               <button
@@ -109,11 +130,17 @@ export function Missions() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-semibold text-zinc-100">{habit.name}</p>
                   <p className="mt-0.5 text-xs font-medium text-zinc-500">
-                    {AREA_LABELS[habit.area]} · +{DIFFICULTY_XP[habit.difficulty]} XP ·{' '}
+                    {AREA_LABELS[habit.area]} · {formatQuantity(habit.unit, habit.defaultQuantity)}
+                    {' · '}
                     {habit.scheduleDays.length === 7
                       ? 'Every day'
                       : habit.scheduleDays.map((d) => DAY_LETTERS[d]).join(' ')}
                   </p>
+                  {lifetime > 0 && (
+                    <p className="mt-1 text-xs font-bold text-accent">
+                      Lifetime: {formatQuantity(habit.unit, lifetime)}
+                    </p>
+                  )}
                 </div>
                 {streak > 0 && (
                   <span className="flex shrink-0 items-center gap-1 text-sm font-bold text-zinc-300">
@@ -188,34 +215,73 @@ export function Missions() {
 
             <div>
               <span className="text-xs font-bold uppercase tracking-widest text-zinc-500">
-                Difficulty
+                Unit
               </span>
               <div className="mt-2 grid grid-cols-3 gap-2">
-                {([1, 2, 3] as Difficulty[]).map((d) => (
+                {UNITS.map((unit) => (
                   <button
-                    key={d}
+                    key={unit}
                     type="button"
-                    onClick={() => setForm({ ...form, difficulty: d })}
-                    aria-pressed={form.difficulty === d}
-                    className={`min-h-11 rounded-lg border px-2 py-2.5 ${
-                      form.difficulty === d
-                        ? 'border-accent bg-accent/10'
-                        : 'border-zinc-700 bg-zinc-800/60'
+                    onClick={() =>
+                      setForm({ ...form, unit, defaultQuantity: UNIT_DEFAULT_QUANTITY[unit] })
+                    }
+                    aria-pressed={form.unit === unit}
+                    className={`min-h-11 rounded-lg border px-2 py-2.5 text-sm font-semibold ${
+                      form.unit === unit
+                        ? 'border-accent bg-accent/10 text-accent'
+                        : 'border-zinc-700 bg-zinc-800/60 text-zinc-400'
                     }`}
                   >
-                    <span
-                      className={`block text-sm font-bold ${
-                        form.difficulty === d ? 'text-accent' : 'text-zinc-300'
-                      }`}
-                    >
-                      {DIFFICULTY_LABELS[d]}
-                    </span>
-                    <span className="block text-xs font-medium text-zinc-500">
-                      +{DIFFICULTY_XP[d]} XP
-                    </span>
+                    {UNIT_LABELS[unit]}
                   </button>
                 ))}
               </div>
+            </div>
+
+            <div>
+              <span className="text-xs font-bold uppercase tracking-widest text-zinc-500">
+                One completion equals
+              </span>
+              <div className="mt-2 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setForm({
+                      ...form,
+                      defaultQuantity: Math.max(1, form.defaultQuantity - UNIT_STEP[form.unit]),
+                    })
+                  }
+                  aria-label="Decrease quantity"
+                  className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800/60 text-zinc-300"
+                >
+                  <Minus className="size-4" />
+                </button>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  value={form.defaultQuantity}
+                  onChange={(e) =>
+                    setForm({ ...form, defaultQuantity: Math.max(1, Number(e.target.value) || 1) })
+                  }
+                  className="min-h-11 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 text-center text-base font-bold tabular-nums text-zinc-100 focus:border-accent focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    setForm({ ...form, defaultQuantity: form.defaultQuantity + UNIT_STEP[form.unit] })
+                  }
+                  aria-label="Increase quantity"
+                  className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800/60 text-zinc-300"
+                >
+                  <Plus className="size-4" />
+                </button>
+              </div>
+              <p className="mt-2 text-xs font-medium text-zinc-500">
+                {formatQuantity(form.unit, form.defaultQuantity)} per completion · ≈
+                {' '}
+                {xpForQuantity(form.unit, form.defaultQuantity)} XP
+              </p>
             </div>
 
             <div>

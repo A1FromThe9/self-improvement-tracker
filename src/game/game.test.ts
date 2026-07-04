@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { levelFromXp, xpToNext, areaLevelFromXp, MAX_LEVEL, DIFFICULTY_XP } from './xp'
+import { levelFromXp, xpToNext, areaLevelFromXp, MAX_LEVEL, xpForQuantity, UNIT_XP_RATE } from './xp'
 import { rankForLevel, nextRank, RANKS } from './ranks'
 import { comboMultiplier, comboXp } from './combo'
 import { currentStreak, bestStreak, habitStreak } from './streaks'
 import { newlyUnlocked, ACHIEVEMENTS, type AchievementStats } from './achievements'
 import { keyFor, lastNDays } from '../lib/dates'
+import { formatQuantity } from '../lib/format'
 
 describe('xp curve', () => {
   it('starts at level 1 with zero xp', () => {
@@ -39,9 +40,47 @@ describe('xp curve', () => {
     expect(areaLevelFromXp(xp).level).toBeGreaterThanOrEqual(levelFromXp(xp).level)
   })
 
-  it('difficulty xp values are ordered', () => {
-    expect(DIFFICULTY_XP[1]).toBeLessThan(DIFFICULTY_XP[2])
-    expect(DIFFICULTY_XP[2]).toBeLessThan(DIFFICULTY_XP[3])
+})
+
+describe('xpForQuantity', () => {
+  it('scales linearly with quantity', () => {
+    expect(xpForQuantity('minutes', 20)).toBe(20)
+    expect(xpForQuantity('minutes', 40)).toBe(40)
+  })
+
+  it('applies the per-unit rate', () => {
+    expect(xpForQuantity('pages', 10)).toBe(Math.round(10 * UNIT_XP_RATE.pages))
+    expect(xpForQuantity('dollars', 25)).toBe(25)
+    expect(xpForQuantity('reps', 20)).toBe(10)
+    expect(xpForQuantity('count', 1)).toBe(20)
+  })
+
+  it('never returns less than 1 XP', () => {
+    expect(xpForQuantity('reps', 1)).toBeGreaterThanOrEqual(1)
+    expect(xpForQuantity('reps', 0)).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('formatQuantity', () => {
+  it('formats minutes under an hour', () => {
+    expect(formatQuantity('minutes', 45)).toBe('45 min')
+  })
+
+  it('formats minutes over an hour as h/m', () => {
+    expect(formatQuantity('minutes', 90)).toBe('1h 30m')
+    expect(formatQuantity('minutes', 120)).toBe('2h')
+    expect(formatQuantity('minutes', 8550)).toBe('142h 30m')
+  })
+
+  it('formats pages, reps and dollars with thousands separators', () => {
+    expect(formatQuantity('pages', 2000)).toBe('2,000 pages')
+    expect(formatQuantity('reps', 12000)).toBe('12,000 reps')
+    expect(formatQuantity('dollars', 1240)).toBe('$1,240')
+  })
+
+  it('formats count with singular/plural', () => {
+    expect(formatQuantity('count', 1)).toBe('1 time')
+    expect(formatQuantity('count', 5)).toBe('5 times')
   })
 })
 

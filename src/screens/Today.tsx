@@ -1,24 +1,27 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Check, Flame, Zap } from 'lucide-react'
-import type { Habit } from '../game/types'
-import { addHabit, completeHabit, uncompleteHabit } from '../db/repo'
+import { Check, Flame, Minus, Pencil, Plus, Zap } from 'lucide-react'
+import type { Completion, Habit } from '../game/types'
+import { UNIT_STEP } from '../game/types'
+import { addHabit, adjustCompletionQuantity, completeHabit, uncompleteHabit } from '../db/repo'
 import { useActiveHabits, useAllCompletions, useProfile, useTodayCompletions } from '../lib/hooks'
-import { levelFromXp, DIFFICULTY_XP } from '../game/xp'
+import { levelFromXp, xpForQuantity } from '../game/xp'
 import { rankForLevel } from '../game/ranks'
 import { comboMultiplier, COMBO_STEPS } from '../game/combo'
 import { currentStreak } from '../game/streaks'
 import { todayKey } from '../lib/dates'
+import { formatQuantity } from '../lib/format'
 import { AreaIcon } from '../components/AreaIcon'
 import { LevelUpOverlay } from '../components/LevelUpOverlay'
 import { Toast, type ToastData } from '../components/Toast'
+import { Sheet } from '../components/Sheet'
 import { feedback } from '../fx/feedback'
 import { burstLevelUp, burstSmall } from '../fx/confetti'
 
-const STARTERS: { name: string; area: Habit['area']; difficulty: Habit['difficulty'] }[] = [
-  { name: 'Train 30 minutes', area: 'body', difficulty: 2 },
-  { name: 'Read 10 pages', area: 'mind', difficulty: 1 },
-  { name: 'One deep work block', area: 'craft', difficulty: 3 },
-  { name: 'Lights out by 11', area: 'discipline', difficulty: 2 },
+const STARTERS: { name: string; area: Habit['area']; unit: Habit['unit']; defaultQuantity: number }[] = [
+  { name: 'Train', area: 'body', unit: 'minutes', defaultQuantity: 30 },
+  { name: 'Read', area: 'mind', unit: 'pages', defaultQuantity: 10 },
+  { name: 'Deep work block', area: 'craft', unit: 'minutes', defaultQuantity: 45 },
+  { name: 'Lights out by 11', area: 'discipline', unit: 'count', defaultQuantity: 1 },
 ]
 
 const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6]
@@ -32,11 +35,16 @@ export function Today() {
   const [levelUp, setLevelUp] = useState<{ level: number; rank: string } | null>(null)
   const [toast, setToast] = useState<ToastData | null>(null)
   const [xpFloats, setXpFloats] = useState<{ id: number; habitId: number; xp: number }[]>([])
+  const [adjusting, setAdjusting] = useState<Habit | null>(null)
   const [startersHidden, setStartersHidden] = useState(
     () => localStorage.getItem('grind.startersHidden') === '1',
   )
 
-  const doneIds = useMemo(() => new Set((todayDone ?? []).map((c) => c.habitId)), [todayDone])
+  const doneByHabit = useMemo(() => {
+    const map = new Map<number, Completion>()
+    for (const c of todayDone ?? []) map.set(c.habitId, c)
+    return map
+  }, [todayDone])
   const dayKeys = useMemo(
     () => new Set((allCompletions ?? []).map((c) => c.dateKey)),
     [allCompletions],
@@ -46,7 +54,7 @@ export function Today() {
   const scheduled = (habits ?? []).filter((h) => h.scheduleDays.includes(weekday))
   const extras = (habits ?? []).filter((h) => !h.scheduleDays.includes(weekday))
   const doneCount = todayDone?.length ?? 0
-  const scheduledDone = scheduled.filter((h) => doneIds.has(h.id!)).length
+  const scheduledDone = scheduled.filter((h) => doneByHabit.has(h.id!)).length
   const streak = currentStreak(dayKeys)
   const streakLost =
     streak === 0 && (allCompletions?.length ?? 0) > 0 && doneCount === 0
@@ -54,10 +62,32 @@ export function Today() {
   const level = levelFromXp(profile?.totalXp ?? 0)
   const nextMultiplier = comboMultiplier(doneCount)
 
+  const applyMutation = useCallback(
+    (mutation: {
+      leveledUp: boolean
+      newLevel: number
+      newRankTitle: string
+      unlocked: { name: string; description: string }[]
+    }) => {
+      if (!profile) return
+      if (mutation.leveledUp) {
+        feedback.levelUp(profile.settings)
+        burstLevelUp()
+        setLevelUp({ level: mutation.newLevel, rank: mutation.newRankTitle })
+      }
+      if (mutation.unlocked.length > 0) {
+        feedback.achievement(profile.settings)
+        const first = mutation.unlocked[0]
+        setToast({ title: `Trophy: ${first.name}`, detail: first.description })
+      }
+    },
+    [profile],
+  )
+
   const onCheck = useCallback(
     async (habit: Habit) => {
       if (!profile) return
-      if (doneIds.has(habit.id!)) {
+      if (doneByHabit.has(habit.id!)) {
         await uncompleteHabit(habit.id!, todayKey())
         return
       }
@@ -68,20 +98,12 @@ export function Today() {
       setXpFloats((f) => [...f, { id: floatId, habitId: habit.id!, xp: result.xpGained }])
       setTimeout(() => setXpFloats((f) => f.filter((x) => x.id !== floatId)), 950)
 
-      if (result.leveledUp) {
-        feedback.levelUp(profile.settings)
-        burstLevelUp()
-        setLevelUp({ level: result.newLevel, rank: result.newRankTitle })
-      } else if (result.multiplier >= 2) {
+      applyMutation(result)
+      if (!result.leveledUp && result.multiplier >= 2) {
         burstSmall()
       }
-      if (result.unlocked.length > 0) {
-        feedback.achievement(profile.settings)
-        const first = result.unlocked[0]
-        setToast({ title: `Trophy: ${first.name}`, detail: first.description })
-      }
     },
-    [profile, doneIds, todayDone],
+    [profile, doneByHabit, todayDone, applyMutation],
   )
 
   const addStarter = async (starter: (typeof STARTERS)[number]) => {
@@ -190,8 +212,8 @@ export function Today() {
                   {habits.length === 0 ? 'No missions yet' : 'Starter picks'}
                 </p>
                 <p className="mt-1 text-sm leading-relaxed text-zinc-400">
-                  Pick a starter or build your own in the Missions tab. Every completed mission
-                  pays XP and raises your rank.
+                  Pick a starter or build your own in the Missions tab. Real quantities pay real
+                  XP and raise your rank.
                 </p>
               </div>
               <button
@@ -213,7 +235,7 @@ export function Today() {
                     <AreaIcon area={s.area} className="size-4 shrink-0 text-accent" />
                     <span className="flex-1 text-sm font-medium text-zinc-200">{s.name}</span>
                     <span className="text-xs font-bold text-zinc-500">
-                      +{DIFFICULTY_XP[s.difficulty]} XP
+                      {formatQuantity(s.unit, s.defaultQuantity)}
                     </span>
                   </button>
                 </li>
@@ -227,9 +249,10 @@ export function Today() {
             <MissionRow
               key={habit.id}
               habit={habit}
-              done={doneIds.has(habit.id!)}
+              completion={doneByHabit.get(habit.id!)}
               xpFloat={xpFloats.find((x) => x.habitId === habit.id)?.xp}
               onCheck={() => onCheck(habit)}
+              onAdjust={() => setAdjusting(habit)}
             />
           ))}
         </ul>
@@ -245,14 +268,22 @@ export function Today() {
               <MissionRow
                 key={habit.id}
                 habit={habit}
-                done={doneIds.has(habit.id!)}
+                completion={doneByHabit.get(habit.id!)}
                 xpFloat={xpFloats.find((x) => x.habitId === habit.id)?.xp}
                 onCheck={() => onCheck(habit)}
+                onAdjust={() => setAdjusting(habit)}
               />
             ))}
           </ul>
         </section>
       )}
+
+      <AdjustSheet
+        habit={adjusting}
+        completion={adjusting ? doneByHabit.get(adjusting.id!) ?? null : null}
+        onClose={() => setAdjusting(null)}
+        onSaved={applyMutation}
+      />
 
       <LevelUpOverlay
         level={levelUp?.level ?? null}
@@ -266,15 +297,18 @@ export function Today() {
 
 function MissionRow({
   habit,
-  done,
+  completion,
   xpFloat,
   onCheck,
+  onAdjust,
 }: {
   habit: Habit
-  done: boolean
+  completion?: Completion
   xpFloat?: number
   onCheck: () => void
+  onAdjust: () => void
 }) {
+  const done = completion !== undefined
   return (
     <li
       className={`relative flex items-center gap-3 rounded-xl border px-4 py-3 transition-colors ${
@@ -294,13 +328,23 @@ function MissionRow({
           {habit.name}
         </p>
         <p className="text-xs font-medium text-zinc-500">
-          +{DIFFICULTY_XP[habit.difficulty]} XP base
+          {formatQuantity(habit.unit, completion?.quantity ?? habit.defaultQuantity)}
         </p>
       </div>
       {xpFloat !== undefined && (
-        <span className="animate-rise pointer-events-none absolute right-16 top-2 text-sm font-extrabold text-accent">
+        <span className="animate-rise pointer-events-none absolute right-24 top-2 text-sm font-extrabold text-accent">
           +{xpFloat} XP
         </span>
+      )}
+      {done && (
+        <button
+          type="button"
+          onClick={onAdjust}
+          aria-label={`Adjust logged amount for ${habit.name}`}
+          className="flex size-9 shrink-0 items-center justify-center rounded-full text-zinc-500 active:bg-zinc-800"
+        >
+          <Pencil className="size-4" />
+        </button>
       )}
       <button
         type="button"
@@ -316,5 +360,87 @@ function MissionRow({
         <Check className={`size-5 ${done ? 'animate-stamp' : ''}`} strokeWidth={3} />
       </button>
     </li>
+  )
+}
+
+function AdjustSheet({
+  habit,
+  completion,
+  onClose,
+  onSaved,
+}: {
+  habit: Habit | null
+  completion: Completion | null
+  onClose: () => void
+  onSaved: (mutation: {
+    leveledUp: boolean
+    newLevel: number
+    newRankTitle: string
+    unlocked: { name: string; description: string }[]
+  }) => void
+}) {
+  const [quantity, setQuantity] = useState(completion?.quantity ?? habit?.defaultQuantity ?? 1)
+
+  // Reset the draft quantity whenever a different completion is opened
+  const key = habit?.id ?? null
+  const [openKey, setOpenKey] = useState<number | null>(null)
+  if (key !== openKey) {
+    setOpenKey(key)
+    setQuantity(completion?.quantity ?? habit?.defaultQuantity ?? 1)
+  }
+
+  const save = async () => {
+    if (!habit) return
+    const mutation = await adjustCompletionQuantity(habit.id!, todayKey(), Math.max(1, quantity))
+    if (mutation) onSaved(mutation)
+    onClose()
+  }
+
+  return (
+    <Sheet open={habit !== null} title="Adjust today's log" onClose={onClose}>
+      {habit && (
+        <div className="space-y-5 pb-2">
+          <p className="text-sm text-zinc-400">
+            How much did you actually do for <span className="text-zinc-200">{habit.name}</span>?
+          </p>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setQuantity((q) => Math.max(1, q - UNIT_STEP[habit.unit]))}
+              aria-label="Decrease quantity"
+              className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800/60 text-zinc-300"
+            >
+              <Minus className="size-4" />
+            </button>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              value={quantity}
+              onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))}
+              className="min-h-11 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 text-center text-base font-bold tabular-nums text-zinc-100 focus:border-accent focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => setQuantity((q) => q + UNIT_STEP[habit.unit])}
+              aria-label="Increase quantity"
+              className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800/60 text-zinc-300"
+            >
+              <Plus className="size-4" />
+            </button>
+          </div>
+          <p className="text-xs font-medium text-zinc-500">
+            {formatQuantity(habit.unit, quantity)} · ≈{xpForQuantity(habit.unit, quantity)} XP base
+          </p>
+          <button
+            type="button"
+            onClick={save}
+            className="min-h-12 w-full rounded-lg bg-accent font-bold text-zinc-950"
+          >
+            Save
+          </button>
+        </div>
+      )}
+    </Sheet>
   )
 }

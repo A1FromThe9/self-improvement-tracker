@@ -8,6 +8,8 @@ import { areaLevelFromXp, levelFromXp } from '../game/xp'
 import { rankForLevel, nextRank } from '../game/ranks'
 import { bestStreak, currentStreak } from '../game/streaks'
 import { keyFor, lastNDays } from '../lib/dates'
+import { formatQuantity } from '../lib/format'
+import { AreaIcon } from '../components/AreaIcon'
 import { XpRing } from '../components/XpRing'
 import { StatBar } from '../components/StatBar'
 import { Heatmap } from '../components/Heatmap'
@@ -21,16 +23,18 @@ export function Stats() {
   const rank = rankForLevel(level.level)
   const next = nextRank(level.level)
 
-  const { areaXp, dayCounts, dayKeys, thisWeek, lastWeek } = useMemo(() => {
+  const { areaXp, dayCounts, dayKeys, thisWeek, lastWeek, habitTotals } = useMemo(() => {
     const habitArea = new Map((allHabits ?? []).map((h) => [h.id, h.area]))
     const areaXp = new Map<string, number>()
     const dayCounts = new Map<string, number>()
     const dayKeys = new Set<string>()
+    const habitTotals = new Map<number, number>()
     for (const c of completions ?? []) {
       dayKeys.add(c.dateKey)
       dayCounts.set(c.dateKey, (dayCounts.get(c.dateKey) ?? 0) + 1)
       const area = habitArea.get(c.habitId)
       if (area) areaXp.set(area, (areaXp.get(area) ?? 0) + c.xp)
+      habitTotals.set(c.habitId, (habitTotals.get(c.habitId) ?? 0) + c.quantity)
     }
     const last7 = new Set(lastNDays(7))
     const prev7 = new Set(lastNDays(14).slice(0, 7))
@@ -40,8 +44,18 @@ export function Stats() {
       if (last7.has(day)) thisWeek += count
       else if (prev7.has(day)) lastWeek += count
     }
-    return { areaXp, dayCounts, dayKeys, thisWeek, lastWeek }
+    return { areaXp, dayCounts, dayKeys, thisWeek, lastWeek, habitTotals }
   }, [completions, allHabits])
+
+  const lifetimeStats = useMemo(() => {
+    const byId = new Map((allHabits ?? []).map((h) => [h.id!, h]))
+    return [...habitTotals.entries()]
+      .map(([habitId, total]) => ({ habit: byId.get(habitId), total }))
+      .filter((entry): entry is { habit: NonNullable<typeof entry.habit>; total: number } =>
+        entry.habit !== undefined,
+      )
+      .sort((a, b) => b.total - a.total)
+  }, [habitTotals, allHabits])
 
   const streak = currentStreak(dayKeys)
   const best = bestStreak(dayKeys)
@@ -128,6 +142,30 @@ export function Stats() {
           })}
         </div>
       </section>
+
+      {lifetimeStats.length > 0 && (
+        <section className="mt-6">
+          <h2 className="text-sm font-bold uppercase tracking-widest text-zinc-500">
+            Lifetime totals
+          </h2>
+          <ul className="mt-3 space-y-2">
+            {lifetimeStats.map(({ habit, total }) => (
+              <li
+                key={habit.id}
+                className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3"
+              >
+                <AreaIcon area={habit.area} className="size-4 shrink-0 text-zinc-500" />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-300">
+                  {habit.name}
+                </span>
+                <span className="shrink-0 text-base font-extrabold tracking-tight text-accent">
+                  {formatQuantity(habit.unit, total)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="mt-6">
         <div className="flex items-baseline justify-between">

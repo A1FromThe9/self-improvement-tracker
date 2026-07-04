@@ -6,7 +6,9 @@ Mobile-first PWA. Install it from Safari with Share, then "Add to Home Screen" a
 
 ## How it works
 
-- **Missions** are your habits. Each one has a life area (Body, Mind, Money, Craft, Discipline, Social), a difficulty that sets its XP payout, and a weekly schedule.
+- **Missions** are your habits. Each one has a life area (Body, Mind, Money, Craft, Discipline, Social), a real unit (minutes, pages, reps, dollars, times) with a default quantity, and a weekly schedule. XP is generated from that real quantity, not an abstract tier.
+- **Tangible lifetime totals**: every mission accumulates a real, human number — "142h meditated", "2,000 pages read", "$1,240 saved" — shown on the Missions list and the Stats screen.
+- **Quick-adjust**: checking off a mission logs its default quantity instantly (keeps the combo chain fast); tap the pencil next to a completed mission to correct today's amount if it was more or less.
 - **Combo heat**: every mission you complete in a day raises the multiplier for the next one, up to x2. Stack your day.
 - **Levels and ranks**: XP feeds a level curve from Rookie all the way to Legend. Level-ups get the full celebration.
 - **Character stats**: each life area levels up separately, GTA style.

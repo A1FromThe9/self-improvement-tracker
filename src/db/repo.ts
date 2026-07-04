@@ -1,7 +1,7 @@
 import { db, ensureProfile, PROFILE_ID } from './schema'
-import type { Area, Difficulty, Habit } from '../game/types'
+import type { Area, Habit, Unit } from '../game/types'
 import { comboMultiplier, comboXp } from '../game/combo'
-import { DIFFICULTY_XP, levelFromXp } from '../game/xp'
+import { xpForQuantity, levelFromXp } from '../game/xp'
 import { rankForLevel } from '../game/ranks'
 import { bestStreak, currentStreak } from '../game/streaks'
 import { newlyUnlocked, type Achievement, type AchievementStats } from '../game/achievements'
@@ -10,7 +10,8 @@ import { todayKey } from '../lib/dates'
 export interface NewHabit {
   name: string
   area: Area
-  difficulty: Difficulty
+  unit: Unit
+  defaultQuantity: number
   scheduleDays: number[]
 }
 
@@ -33,13 +34,16 @@ export async function deleteHabit(id: number): Promise<void> {
   })
 }
 
-export interface CompleteResult {
-  xpGained: number
-  multiplier: number
+export interface XpMutationResult {
   leveledUp: boolean
   newLevel: number
   newRankTitle: string
   unlocked: Achievement[]
+}
+
+export interface CompleteResult extends XpMutationResult {
+  xpGained: number
+  multiplier: number
 }
 
 async function collectAchievementStats(totalXp: number): Promise<AchievementStats> {
@@ -77,9 +81,31 @@ async function collectAchievementStats(totalXp: number): Promise<AchievementStat
   }
 }
 
-export async function completeHabit(habit: Habit): Promise<CompleteResult> {
+/** Applies an XP delta to the profile and reports any level-up / new trophies. Caller must run inside a transaction that includes db.profile. */
+async function applyXpDelta(deltaXp: number): Promise<XpMutationResult> {
+  const profile = await ensureProfile()
+  const before = levelFromXp(profile.totalXp)
+  const totalXp = Math.max(0, profile.totalXp + deltaXp)
+  const after = levelFromXp(totalXp)
+
+  const stats = await collectAchievementStats(totalXp)
+  const unlocked = newlyUnlocked(stats, profile.unlocked)
+
+  await db.profile.update(PROFILE_ID, {
+    totalXp,
+    unlocked: [...profile.unlocked, ...unlocked.map((a) => a.id)],
+  })
+
+  return {
+    leveledUp: after.level > before.level,
+    newLevel: after.level,
+    newRankTitle: rankForLevel(after.level).title,
+    unlocked,
+  }
+}
+
+export async function completeHabit(habit: Habit, quantity?: number): Promise<CompleteResult> {
   return db.transaction('rw', db.habits, db.completions, db.profile, async () => {
-    const profile = await ensureProfile()
     const dateKey = todayKey()
 
     const already = await db.completions
@@ -87,6 +113,7 @@ export async function completeHabit(habit: Habit): Promise<CompleteResult> {
       .equals([habit.id!, dateKey])
       .count()
     if (already > 0) {
+      const profile = await ensureProfile()
       const info = levelFromXp(profile.totalXp)
       return {
         xpGained: 0,
@@ -99,37 +126,23 @@ export async function completeHabit(habit: Habit): Promise<CompleteResult> {
     }
 
     const doneToday = await db.completions.where('dateKey').equals(dateKey).count()
-    const baseXp = DIFFICULTY_XP[habit.difficulty]
+    const amount = quantity ?? habit.defaultQuantity
+    const baseXp = xpForQuantity(habit.unit, amount)
     const xp = comboXp(baseXp, doneToday)
     const multiplier = comboMultiplier(doneToday)
 
     await db.completions.add({
       habitId: habit.id!,
       dateKey,
+      quantity: amount,
+      unit: habit.unit,
       xp,
       completedAt: Date.now(),
     })
 
-    const before = levelFromXp(profile.totalXp)
-    const totalXp = profile.totalXp + xp
-    const after = levelFromXp(totalXp)
+    const mutation = await applyXpDelta(xp)
 
-    const stats = await collectAchievementStats(totalXp)
-    const unlocked = newlyUnlocked(stats, profile.unlocked)
-
-    await db.profile.update(PROFILE_ID, {
-      totalXp,
-      unlocked: [...profile.unlocked, ...unlocked.map((a) => a.id)],
-    })
-
-    return {
-      xpGained: xp,
-      multiplier,
-      leveledUp: after.level > before.level,
-      newLevel: after.level,
-      newRankTitle: rankForLevel(after.level).title,
-      unlocked,
-    }
+    return { xpGained: xp, multiplier, ...mutation }
   })
 }
 
@@ -145,6 +158,34 @@ export async function uncompleteHabit(habitId: number, dateKey: string): Promise
     await db.profile.update(PROFILE_ID, {
       totalXp: Math.max(0, profile.totalXp - completion.xp),
     })
+  })
+}
+
+/**
+ * Adjusts the quantity logged for today's completion of a habit (e.g. you
+ * actually meditated 35 minutes, not the default 20). Preserves whatever
+ * combo multiplier applied at the original completion time.
+ */
+export async function adjustCompletionQuantity(
+  habitId: number,
+  dateKey: string,
+  quantity: number,
+): Promise<XpMutationResult | null> {
+  return db.transaction('rw', db.completions, db.habits, db.profile, async () => {
+    const completion = await db.completions
+      .where('[habitId+dateKey]')
+      .equals([habitId, dateKey])
+      .first()
+    if (!completion) return null
+
+    const originalBaseXp = xpForQuantity(completion.unit, completion.quantity)
+    const multiplier = completion.xp / originalBaseXp
+    const newXp = Math.max(1, Math.round(xpForQuantity(completion.unit, quantity) * multiplier))
+    const deltaXp = newXp - completion.xp
+
+    await db.completions.update(completion.id!, { quantity, xp: newXp })
+
+    return applyXpDelta(deltaXp)
   })
 }
 

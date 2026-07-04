@@ -1,15 +1,20 @@
-import type { Difficulty } from './types'
+import type { Unit } from './types'
 
-export const DIFFICULTY_XP: Record<Difficulty, number> = {
-  1: 10,
-  2: 25,
-  3: 50,
+/**
+ * XP per single unit, tuned so a typical one-session quantity
+ * (20 min, 10 pages, 20 reps, $10, 1x) lands near 10-40 XP,
+ * roughly the old flat difficulty range.
+ */
+export const UNIT_XP_RATE: Record<Unit, number> = {
+  minutes: 1,
+  pages: 2,
+  reps: 0.5,
+  dollars: 1,
+  count: 20,
 }
 
-export const DIFFICULTY_LABELS: Record<Difficulty, string> = {
-  1: 'Easy',
-  2: 'Solid',
-  3: 'Hard',
+export function xpForQuantity(unit: Unit, quantity: number): number {
+  return Math.max(1, Math.round(quantity * UNIT_XP_RATE[unit]))
 }
 
 export const MAX_LEVEL = 99
